@@ -1,0 +1,152 @@
+# Dev compose — random host ports (42817 / 42818).
+# /deploy will rewrite to the 8081+ standard.
+name: goserverless
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      TZ: Asia/Shanghai
+      POSTGRES_USER: gscf
+      POSTGRES_PASSWORD: gscf_dev_pass
+      POSTGRES_DB: goserverless
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gscf -d goserverless"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      TZ: Asia/Shanghai
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  sandbox-go-image:
+    image: goserverless/sandbox-go:local
+    build:
+      context: .
+      dockerfile: images/sandbox-go/Dockerfile
+    entrypoint: ["true"]
+    restart: "no"
+
+  sandbox-node-image:
+    image: goserverless/sandbox-node:local
+    build:
+      context: .
+      dockerfile: images/sandbox-node/Dockerfile
+    entrypoint: ["true"]
+    restart: "no"
+
+  builder-go-image:
+    image: goserverless/builder-go:local
+    build:
+      context: .
+      dockerfile: images/builder-go/Dockerfile
+    entrypoint: ["true"]
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      TZ: Asia/Shanghai
+      APP_ENV: development
+      LOG_LEVEL: info
+      HTTP_ADDR: :8080
+      DATABASE_URL: postgres://gscf:gscf_dev_pass@postgres:5432/goserverless?sslmode=disable
+      REDIS_ADDR: redis:6379
+      DOCKER_HOST: unix:///var/run/docker.sock
+      ARTIFACT_ROOT: /var/lib/goserverless/artifacts
+      SOCKET_ROOT: /var/lib/goserverless/sockets
+      SANDBOX_GO_IMAGE: goserverless/sandbox-go:local
+      SANDBOX_NODE_IMAGE: goserverless/sandbox-node:local
+      BUILDER_GO_IMAGE: goserverless/builder-go:local
+      POOL_WARM_SIZE: "3"
+      POOL_IDLE_TTL_SEC: "300"
+      AUTH_USER: admin
+      AUTH_PASS: admin123
+      PUBLIC_BASE_URL: http://localhost:42818
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gscfdata:/var/lib/goserverless
+    ports:
+      - "42818:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      sandbox-go-image:
+        condition: service_completed_successfully
+      sandbox-node-image:
+        condition: service_completed_successfully
+      builder-go-image:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/server", "-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend-admin
+      dockerfile: Dockerfile
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "42817:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    restart: unless-stopped
+
+  qa:
+    image: python:3.12-alpine
+    environment:
+      TZ: Asia/Shanghai
+      PYTHONIOENCODING: utf-8
+      API_BASE: http://backend:8080
+    volumes:
+      - ./tests:/tests
+    working_dir: /tests
+    depends_on:
+      backend:
+        condition: service_healthy
+    profiles: ["qa"]
+    command: ["python", "api_smoke.py"]
+
+  qa-go:
+    image: golang:1.25-alpine
+    environment:
+      TZ: Asia/Shanghai
+      GOPROXY: https://goproxy.cn,direct
+    working_dir: /src
+    volumes:
+      - ./backend:/src
+    command: ["go", "test", "./..."]
+    profiles: ["qa"]
+
+volumes:
+  pgdata:
+  redisdata:
+  gscfdata:
