@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gogo/goserverless/internal/config"
 	"github.com/gogo/goserverless/internal/dockerx"
@@ -38,6 +39,7 @@ func New(cfg *config.Config, st *store.Store, reg *rt.Registry, d *dockerx.Clien
 }
 
 func (p *Pipeline) Start(ctx context.Context) {
+	go p.reaper(ctx)
 	go func() {
 		for {
 			select {
@@ -50,6 +52,19 @@ func (p *Pipeline) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+func (p *Pipeline) reaper(ctx context.Context) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			p.docker.ReapOrphans(context.Background())
+		}
+	}
 }
 
 func (p *Pipeline) Enqueue(name string) {
