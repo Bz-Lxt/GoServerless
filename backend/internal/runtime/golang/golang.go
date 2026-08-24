@@ -85,9 +85,12 @@ func rewriteGoPackage(code string) string {
 
 func (r *Runtime) InvokeHint(artifactRel string) rt.InvokeHint {
 	bin := filepath.ToSlash(filepath.Join(artifactRel, "handler"))
+	cmd := make([]string, 0, len(r.command)+1)
+	cmd = append(cmd, r.command...)
+	cmd = append(cmd, bin)
 	return rt.InvokeHint{
 		Runtime:    model.RuntimeGo,
-		Command:    append(r.command, bin),
+		Command:    cmd,
 		WorkingDir: filepath.ToSlash(artifactRel),
 	}
 }
