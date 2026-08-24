@@ -98,6 +98,9 @@ func (p *Pipeline) buildOne(ctx context.Context, name string) error {
 	if err != nil {
 		return p.fail(ctx, fn, ver, err.Error())
 	}
+	if art.BuildLog != "" {
+		ver.BuildLog = strings.TrimSpace(ver.BuildLog + "\n" + art.BuildLog)
+	}
 	packed, err := runtimeImpl.Pack(ctx, art)
 	if err != nil {
 		return p.fail(ctx, fn, ver, "pack: "+err.Error())
@@ -133,7 +136,7 @@ func (p *Pipeline) buildOne(ctx context.Context, name string) error {
 
 func (p *Pipeline) fail(ctx context.Context, fn *model.Function, ver *model.FunctionVersion, msg string) error {
 	ver.Status = model.StatusFailed
-	ver.BuildLog = msg
+	ver.BuildLog = strings.TrimSpace(ver.BuildLog + "\n" + msg)
 	_ = p.st.UpdateVersion(ctx, ver)
 	fn.Status = model.StatusFailed
 	fn.UpdatedAt = timeutil.NowUTC()
