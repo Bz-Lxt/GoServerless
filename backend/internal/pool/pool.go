@@ -18,6 +18,13 @@ import (
 	rt "github.com/gogo/goserverless/internal/runtime"
 )
 
+// SandboxCreator abstracts container lifecycle so the pool can be tested
+// without a live Docker daemon. *dockerx.Client satisfies this interface.
+type SandboxCreator interface {
+	CreateSandbox(ctx context.Context, opt dockerx.CreateSandboxOpts) (string, error)
+	RemoveContainer(ctx context.Context, id string) error
+}
+
 type AcquireResult struct {
 	Slot      *Slot
 	ColdStart bool
@@ -26,7 +33,7 @@ type AcquireResult struct {
 
 type Pool struct {
 	cfg     *config.Config
-	docker  *dockerx.Client
+	docker  SandboxCreator
 	images  rt.Images
 	hostVol string
 
@@ -34,7 +41,7 @@ type Pool struct {
 	slots map[string]*Slot
 }
 
-func New(cfg *config.Config, d *dockerx.Client, images rt.Images, hostVol string) *Pool {
+func New(cfg *config.Config, d SandboxCreator, images rt.Images, hostVol string) *Pool {
 	return &Pool{
 		cfg:     cfg,
 		docker:  d,
@@ -73,7 +80,16 @@ func (p *Pool) Acquire(ctx context.Context, runtime model.RuntimeName) (*Acquire
 				p.discard(s)
 				acq, coldErr := p.cold(ctx, runtime, start)
 				if coldErr != nil {
-					return nil, fmt.Errorf("warm sandbox unavailable: %w; cold fallback failed: %v", err, coldErr)
+					// The cold-fallback failure is authoritative:
+					// it already carries the correct 503/UNAVAILABLE
+					// classification that the gateway relies on for
+					// node failover. Wrap it with %w so that
+					// *model.Error stays in the unwrap chain and
+					// model.HTTPStatus/CodeOf surface 503/UNAVAILABLE.
+					// The warm-readiness failure is a plain fmt.Errorf;
+					// it must NOT be the %w target or it hijacks the
+					// chain and degrades the response to 500/INTERNAL.
+					return nil, fmt.Errorf("warm sandbox unavailable: %v; cold fallback failed: %w", err, coldErr)
 				}
 				return acq, nil
 			}
