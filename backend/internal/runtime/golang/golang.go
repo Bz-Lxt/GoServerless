@@ -25,7 +25,10 @@ func (e *buildError) Error() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf("%v: %s", e.cause, e.log)
+	if e.log != "" {
+		return fmt.Sprintf("%v: %s", e.cause, e.log)
+	}
+	return e.cause.Error()
 }
 
 func (e *buildError) Unwrap() error {
@@ -33,13 +36,6 @@ func (e *buildError) Unwrap() error {
 		return nil
 	}
 	return e.cause
-}
-
-func wrapBuildError(cause error, log string) *buildError {
-	if cause == nil {
-		return nil
-	}
-	return &buildError{cause: cause, log: log}
 }
 
 func New(artifactRoot string) *Runtime {
@@ -82,11 +78,12 @@ func (r *Runtime) Prepare(ctx context.Context, src rt.Source) (rt.Workdir, error
 func (r *Runtime) Build(ctx context.Context, w rt.Workdir, builder rt.Builder) (rt.Artifact, error) {
 	out := filepath.Join(w.Path, "handler.bin")
 	log, err := builder.BuildGo(ctx, w.Path, out)
-	buildErr := wrapBuildError(err, log)
-	if buildErr != nil {
-		return rt.Artifact{}, buildErr
+	if err != nil {
+		// 真正的编译失败：保留日志，交给 pipeline 标记 FAILED。
+		return rt.Artifact{}, &buildError{cause: err, log: log}
 	}
-	return rt.Artifact{Path: out, AbsPath: out, Filename: "handler.bin"}, buildErr
+	// 成功路径：直接返回 nil error，避免 *buildError 作为 interface 时产生 typed-nil。
+	return rt.Artifact{Path: out, AbsPath: out, Filename: "handler.bin", BuildLog: log}, nil
 }
 
 func (r *Runtime) Pack(_ context.Context, a rt.Artifact) (rt.Packed, error) {

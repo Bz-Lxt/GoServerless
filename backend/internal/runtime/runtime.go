@@ -24,6 +24,7 @@ type Artifact struct {
 	Path     string // 容器内可见路径，相对 ARTIFACT_ROOT
 	AbsPath  string // 后端容器内绝对路径
 	Filename string
+	BuildLog string // 编译器/构建器输出日志（成功路径保留）
 }
 
 type Packed struct {
