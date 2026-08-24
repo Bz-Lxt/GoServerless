@@ -1,0 +1,64 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+backend/server
+backend/sandbox-agent
+
+# Go
+backend/vendor/
+*.test
+*.out
+coverage.html
+coverage.out
+
+# Node
+node_modules/
+frontend-admin/dist/
+frontend-admin/.vite/
+*.tsbuildinfo
+.npm
+.eslintcache
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Runtime data
+data/
+artifacts/
+logs/
+*.log
+.tmp/
+tmp/
+
+# Test / cache
+.pytest_cache/
+playwright-report/
+test-results/
+.playwright/
+
+# Docker leftovers
+.docker/
+
+# Alkaid local marker (kept tracked so swarm can gate; ignore generated audit dumps if any)
+docs/.meta/*.tmp
+/docs/
+/.alkaid-sop
+/CLAUDE.md
+/AGENTS.md
+/.cursorrules
+/.github/
