@@ -1,0 +1,12 @@
+.git
+.alkaid-sop
+docs
+**/.DS_Store
+**/node_modules
+**/dist
+**/.vite
+**/coverage.out
+**/bin
+**/*.log
+frontend-admin/dist
+backend/vendor
