@@ -79,6 +79,9 @@ func main() {
 		os.Exit(1)
 	}
 	_ = os.Chmod(cfg.SocketRoot, 0o777)
+	// Reap any builder/sandbox containers orphaned by a previous crash or
+	// forced restart so they do not accumulate across rolling deploys.
+	dk.ReapOrphans(ctx)
 	hostVol, err := dk.VolumeMountpoint(ctx, cfg.ArtifactVolume)
 	if err != nil {
 		logger.Warn(ctx, "volume inspect failed, falling back to container paths", "err", err)

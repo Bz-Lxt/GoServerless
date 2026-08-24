@@ -8,10 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/gogo/goserverless/internal/logger"
 )
@@ -23,8 +27,26 @@ const (
 	LabelSlot    = "goserverless.slot"
 )
 
+// dockerAPI captures the subset of the Docker Engine API used by this
+// package. Defining it as an interface (instead of depending on the concrete
+// *client.Client) allows tests to inject a fake without a running daemon.
+type dockerAPI interface {
+	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
+	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
+	ContainerKill(ctx context.Context, containerID, signal string) error
+	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+	ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
+	ImageInspectWithRaw(ctx context.Context, imageName string) (image.InspectResponse, []byte, error)
+	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
+	VolumeInspect(ctx context.Context, volumeID string) (volume.Volume, error)
+	Ping(ctx context.Context) (types.Ping, error)
+	Close() error
+}
+
 type Client struct {
-	cli *client.Client
+	cli dockerAPI
 }
 
 func New(host string) (*Client, error) {
@@ -55,7 +77,7 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 func (c *Client) HasImage(ctx context.Context, ref string) error {
-	_, err := c.cli.ImageInspect(ctx, ref)
+	_, _, err := c.cli.ImageInspectWithRaw(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("image %s missing: %w", ref, err)
 	}
@@ -159,7 +181,11 @@ func (c *Client) RunBuilder(ctx context.Context, image, workHost, outputName str
 		return "", fmt.Errorf("create builder: %w", err)
 	}
 	defer func() {
-		_ = c.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		rCtx, rCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer rCancel()
+		if err := c.cli.ContainerRemove(rCtx, resp.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !isNotFound(err) {
+			logger.Warn(rCtx, "remove builder container failed", "id", resp.ID, "name", name, "err", err)
+		}
 	}()
 	if err := c.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return "", fmt.Errorf("start builder: %w", err)
@@ -178,8 +204,22 @@ func (c *Client) RunBuilder(ctx context.Context, image, workHost, outputName str
 		}
 		return logs, nil
 	case <-ctx.Done():
-		_ = c.cli.ContainerKill(context.Background(), resp.ID, "KILL")
-		return c.logs(context.Background(), resp.ID), ctx.Err()
+		// Context canceled (e.g. backend rolling restart, client disconnect).
+		// Kill the container with a fresh background context so the Docker
+		// API call itself is not immediately canceled, then drain the wait
+		// channel so the container reaches the NotRunning state before the
+		// deferred ContainerRemove runs. This prevents the "canceled" remove
+		// from silently no-op'ing and leaving a gscf-builder-* orphan behind.
+		bgCtx, bgCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = c.cli.ContainerKill(bgCtx, resp.ID, "KILL")
+		select {
+		case <-statusCh:
+		case <-errCh:
+		case <-time.After(8 * time.Second):
+		}
+		bgCancel()
+		logs := c.logs(context.Background(), resp.ID)
+		return logs, ctx.Err()
 	}
 	return "", nil
 }
@@ -210,7 +250,7 @@ func (c *Client) ReapOrphans(ctx context.Context) {
 }
 
 func (c *Client) ImagePullSilent(ctx context.Context, ref string) error {
-	_, err := c.cli.ImageInspect(ctx, ref)
+	_, _, err := c.cli.ImageInspectWithRaw(ctx, ref)
 	if err == nil {
 		return nil
 	}
