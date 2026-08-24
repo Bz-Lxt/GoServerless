@@ -60,6 +60,7 @@ func (inv *Invoker) Invoke(ctx context.Context, name string, kind model.TriggerK
 	if err := inv.enter(fn); err != nil {
 		return nil, err
 	}
+	defer inv.leave(fn.Name)
 
 	runtimeImpl, err := inv.reg.Get(fn.Runtime)
 	if err != nil {
@@ -71,7 +72,6 @@ func (inv *Invoker) Invoke(ctx context.Context, name string, kind model.TriggerK
 	if err != nil {
 		return nil, err
 	}
-	defer inv.leave(fn.Name)
 	defer inv.pool.Release(acq.Slot)
 
 	eventRaw, _ := json.Marshal(ev)
