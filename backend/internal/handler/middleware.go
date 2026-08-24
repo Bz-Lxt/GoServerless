@@ -48,8 +48,8 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 func (w *statusWriter) Flush() {
-	if f, ok := w.ResponseWriter.(interface{ Flush() error }); ok {
-		_ = f.Flush()
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 
